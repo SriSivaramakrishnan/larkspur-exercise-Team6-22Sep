@@ -1,0 +1,21 @@
+{
+  "turns": 2,
+  "tool_calls": 2,
+  "tool_names": [
+    "lookup_booking",
+    "fare_rules"
+  ],
+  "saw_thinking": true,
+  "used_format": false,
+  "used_tool_choice_none": false,
+  "streamed": false,
+  "deltas_seen": 0,
+  "tokens": {
+    "input": 7083,
+    "output": 669,
+    "cache_read": 0,
+    "cache_write": 0
+  },
+  "cache_hit_ratio": null,
+  "elapsed": 9.9
+}

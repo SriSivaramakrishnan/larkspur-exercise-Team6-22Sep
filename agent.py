@@ -9,6 +9,8 @@ Where you edit:   grep -n '✏' agent.py   (six marks, one per place)
 Steps and gates:  https://anthropicpartnerbasecamp.bts.com/
 """
 from __future__ import annotations
+import re
+from pathlib import Path
 from typing import Any, Dict, List
 from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
                      new_session, next_available_day, record_tool_result,
@@ -16,9 +18,71 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
+_FARE_RULES_PATH = Path(__file__).parent / "data" / "americas" / "fare_rules_excerpt.md"
+
+
+def fare_rules(section: str) -> str:
+    """Return one section of the published Handbook excerpt, read straight off
+    disk so the answer is quotable and never invented. Matches on the section
+    number ('4') or on any words from its title ('fare families')."""
+    query = re.sub(r"^section\s+", "", (section or "").strip().lower()).rstrip(".")
+    text = _FARE_RULES_PATH.read_text(encoding="utf-8")
+
+    sections: List[Dict[str, Any]] = []
+    current: Dict[str, Any] | None = None
+    for line in text.splitlines():
+        if line.startswith("### "):
+            heading = line[4:].strip()
+            m = re.match(r"^(\d+)\.\s*(.*)$", heading)
+            current = {"number": m.group(1) if m else "",
+                       "title": m.group(2) if m else heading,
+                       "heading": heading, "lines": []}
+            sections.append(current)
+        elif current is not None:
+            current["lines"].append(line)
+    for s in sections:
+        s["text"] = "### %s\n\n%s" % (s["heading"], "\n".join(s["lines"]).strip())
+
+    if not query:
+        labels = ", ".join("%s (%s)" % (s["number"], s["title"]) for s in sections)
+        return "section is required. Available sections: %s." % labels
+    for s in sections:
+        if query == s["number"]:
+            return s["text"]
+    for s in sections:
+        if query in s["title"].lower():
+            return s["text"]
+    return "No section matches %r." % section
+
+
 TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
-EXTRA_TOOLS: List[Dict[str, Any]] = []   # ✏️ Build 2, step 2.1: schemas for the tools you add
-LOCAL_TOOLS: Dict[str, Any] = {}         # ✏️ Build 2, step 2.1: the functions behind them
+EXTRA_TOOLS: List[Dict[str, Any]] = [    # ✏️ Build 2, step 2.1: schemas for the tools you add
+    {
+        "name": "fare_rules",
+        "description": (
+            "Return the exact Handbook text behind a fare or entitlement rule, read "
+            "straight from the published excerpt so the reply can quote it instead of "
+            "paraphrasing. Call this when a customer challenges an answer or asks why "
+            "something is or is not allowed and wants the rule itself. check_policy "
+            "decides what is owed for a disruption; this decides nothing, it returns the "
+            "rule that decision rests on. It takes one input, section: a number like '4', "
+            "or words from a section title such as 'fare families'. It returns that "
+            "section's full Handbook text, never a summary and never a computed amount."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "description": ("A section number like '4' (fare families) or '5' "
+                                    "(disruption waivers), or words from the section title."),
+                },
+            },
+            "required": ["section"],
+        },
+    },
+]
+LOCAL_TOOLS: Dict[str, Any] = {"fare_rules": fare_rules}  # ✏️ Build 2, step 2.1: the functions behind them
 
 
 def text_of(response) -> str:
@@ -65,19 +129,17 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
         thinking={"type": "adaptive"}, tools=tools, messages=messages,
     )
 
-    answer = ""
     turns = 1
     while response.stop_reason == "tool_use" and turns < MAX_TOOL_CALLS:
-        messages.append({"role": "assistant", "content": text_of(response)})
+        messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results(response)})
-        answer = text_of(response)
         response = client.messages.create(
             model=MODEL, max_tokens=4096, system=runtime_preamble() + SYSTEM_PROMPT + TONE_ADDENDUM,
             thinking={"type": "adaptive"}, tools=tools, messages=messages,
         )
         turns += 1
 
-    return answer
+    return text_of(response)
 
 
 def tool_list() -> List[Dict[str, Any]]:                   # ✏️ Build 2, step 2.2
@@ -119,14 +181,19 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
                 "type": "object",
                 "properties": {
                     "flight_no": {"type": "string"},
-                    "date": {"type": "string", "description": "MM/DD/YYYY"},
+                    "date": {"type": "string", "description": "YYYY-MM-DD"},
                 },
                 "required": ["flight_no", "date"],
             },
         },
         {
             "name": "search_alternatives",
-            "description": "search",
+            "description": (
+                "Search Altura for rebooking alternatives on this PNR's disrupted segment: "
+                "other Larkspur or partner flights, departure times, and any fare difference. "
+                "Returns option_id values that hold_seat and confirm_rebooking act on. Call "
+                "this after check_policy has established what the customer is entitled to."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {"pnr": {"type": "string"}},

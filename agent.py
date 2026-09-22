@@ -81,8 +81,33 @@ EXTRA_TOOLS: List[Dict[str, Any]] = [    # ✏️ Build 2, step 2.1: schemas for
             "required": ["section"],
         },
     },
+    {
+        "name": "next_available_day",
+        "description": (
+            "Find the earliest date with an open seat on a route, when search_alternatives "
+            "has already come back with nothing usable near the original date. It answers "
+            "for one passenger only: it does not know how many people are on the PNR, so "
+            "treat its date as a starting point to re-check with search_alternatives once "
+            "you have it, not as a confirmed option for a whole party. origin and dest come "
+            "from the disrupted segment (the same booking/flight-status data you already "
+            "have); date is the earliest date to start searching from, 'YYYY-MM-DD'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "origin": {"type": "string", "description": "Origin airport code, e.g. 'DEN'."},
+                "dest": {"type": "string", "description": "Destination airport code, e.g. 'AUS'."},
+                "date": {"type": "string", "description": "Earliest date to search from, 'YYYY-MM-DD'."},
+                "cabin": {"type": "string", "description": "Cabin class, e.g. 'Y'. Optional, defaults to 'Y'."},
+            },
+            "required": ["origin", "dest", "date"],
+        },
+    },
 ]
-LOCAL_TOOLS: Dict[str, Any] = {"fare_rules": fare_rules}  # ✏️ Build 2, step 2.1: the functions behind them
+LOCAL_TOOLS: Dict[str, Any] = {  # ✏️ Build 2, step 2.1: the functions behind them
+    "fare_rules": fare_rules,
+    "next_available_day": next_available_day,
+}
 
 
 def text_of(response) -> str:

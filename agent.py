@@ -9,6 +9,7 @@ Where you edit:   grep -n '✏' agent.py   (six marks, one per place)
 Steps and gates:  https://anthropicpartnerbasecamp.bts.com/
 """
 from __future__ import annotations
+import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List
@@ -53,6 +54,40 @@ def fare_rules(section: str) -> str:
         if query in s["title"].lower():
             return s["text"]
     return "No section matches %r." % section
+
+
+_TRANSCRIPTS_PATH = Path(__file__).parent / "data" / "americas" / "transcripts_sample.jsonl"
+
+
+def reopen_stats(ticket_type: str) -> str:
+    """Return how often one ticket type came back inside 72 hours, counted off the
+    transcript corpus, together with the reasons the reopened ones came back."""
+    records = [json.loads(line) for line
+               in _TRANSCRIPTS_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+    labels = sorted({r.get("intent_label", "") for r in records})
+
+    query = (ticket_type or "").strip().lower()
+    if not query:
+        return "ticket_type is required. Types in the corpus: %s." % ", ".join(labels)
+
+    matched_labels = [l for l in labels if l.lower() == query]
+    if not matched_labels:
+        matched_labels = [l for l in labels if query in l.lower()]
+    if not matched_labels:
+        return "No ticket type matches %r. Types in the corpus: %s." % (ticket_type, ", ".join(labels))
+    if len(matched_labels) > 1:
+        return "%r matches %s. Call again with one of them." % (ticket_type, ", ".join(matched_labels))
+
+    label = matched_labels[0]
+    matched = [r for r in records if r.get("intent_label") == label]
+    reopened = [r for r in matched if r.get("reopened_within_72h")]
+    return json.dumps({
+        "ticket_type": label,
+        "reopened_within_72h": len(reopened),
+        "tickets_seen": len(matched),
+        "reopen_rate": round(len(reopened) / len(matched), 2),
+        "reopen_reasons": [r["reopen_reason"] for r in reopened if r.get("reopen_reason")],
+    })
 
 
 TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
@@ -103,10 +138,43 @@ EXTRA_TOOLS: List[Dict[str, Any]] = [    # ✏️ Build 2, step 2.1: schemas for
             "required": ["origin", "dest", "date"],
         },
     },
+    {
+        "name": "reopen_stats",
+        "description": (
+            "Report how often one type of ticket came back inside 72 hours, and why, "
+            "counted off Larkspur's own resolved-transcript corpus. Call this as soon as you "
+            "know what kind of contact this is, after the booking and policy lookups and "
+            "before you write your reply: it tells you where this ticket type usually fails "
+            "afterwards, so you can close that gap in the reply you are about to write "
+            "instead of repeating it. A reason like 'confirmation email never "
+            "arrived' means send the confirmation before you sign off; 'bag question "
+            "deflected' means answer it now rather than pointing at the airport. This is "
+            "for your own next action, not a figure to quote to the customer. It takes one "
+            "input, ticket_type, the intent label for this contact such as "
+            "'rebook_after_cancellation' or 'missed_connection'; call it with an empty "
+            "string to see every type in the corpus. It returns the count that reopened, "
+            "the number of tickets that count was drawn from, the rate, and the reopen "
+            "reasons. Read tickets_seen before you trust the rate: this corpus is a sample, "
+            "and a rate drawn from one or two tickets is a hint, not a statistic."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticket_type": {
+                    "type": "string",
+                    "description": ("The intent label for this contact, such as "
+                                    "'rebook_after_cancellation', 'refund_vs_credit' or "
+                                    "'baggage_after_rebooking'. Empty string lists the types."),
+                },
+            },
+            "required": ["ticket_type"],
+        },
+    },
 ]
 LOCAL_TOOLS: Dict[str, Any] = {  # ✏️ Build 2, step 2.1: the functions behind them
     "fare_rules": fare_rules,
     "next_available_day": next_available_day,
+    "reopen_stats": reopen_stats,
 }
 
 
